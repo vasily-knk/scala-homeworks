@@ -1,12 +1,16 @@
 import scala.util.parsing.combinator._
-import scala.collection.immutable.HashMap
+import scala.collection.immutable._
 
 object Arith {
     trait Value {
         def value: Double
         def literal: String
-        case class WrongType(smth:String)  extends Exception
+        case class WrongType(smth:String) extends Exception
     }
+
+    type Args = List[String]
+    type CallArgs = List[Expr]
+    type ArgValues = List[Value]
 
     case class NumValue(value: Double) extends Value {
         def literal: String = throw new WrongType("Double -> String")
@@ -16,7 +20,7 @@ object Arith {
         def value: Double = throw new WrongType("String -> Double")
     }
 
-    type Context = Map[String, Value]
+    case class Context(vars: Map[String, Value])
 
     trait Expr {
         def eval(context: Context) : Value
@@ -24,11 +28,13 @@ object Arith {
 
     case class BinaryExpression(left: Expr, op: String, right: Expr) extends Expr {
         def eval(context: Context) : Value = {
+            val leftVal  = left.eval(context).value
+            val rightVal = left.eval(context).value
             op match {
-                case "+" => NumValue(left.eval(context).value + right.eval(context).value)
-                case "-" => NumValue(left.eval(context).value - right.eval(context).value)
-                case "*" => NumValue(left.eval(context).value * right.eval(context).value)
-                case "/" => NumValue(left.eval(context).value / right.eval(context).value)
+                case "+" => NumValue(leftVal + rightVal)
+                case "-" => NumValue(leftVal - rightVal)
+                case "*" => NumValue(leftVal * rightVal)
+                case "/" => NumValue(leftVal / rightVal)
             }
         }
     }
@@ -47,11 +53,29 @@ object Arith {
 
     case class VariableExpression(name: String) extends Expr {
         def eval(context: Context): Value = {
-            context.get(name).get
+            context.vars.get(name).get
         }
     }
 
+    case class Body(assignments: List[Assignment], expr: Expr)
+
+    case class Func(name: String, args: Args, body: Body) {
+
+    }
+
     case class Assignment(name: String, e: Expr)
+
+    case class CallExpr(name: String, args: CallArgs) extends Expr {
+        def eval(context: Context): Value = {
+            //val arg_values = args.map((e: Expr) => e.eval(context))
+            NumValue(0)
+        }
+    }
+
+    class Prog(funcs: List[Func]) {
+
+
+    }
 }
 
 class Arith extends JavaTokenParsers {
@@ -63,14 +87,11 @@ class Arith extends JavaTokenParsers {
                 case (res, op ~ right) => BinaryExpression(res, op, right)
             }
     }
-    def foo(name: String, e: Expr) : Assignment = {
-        Assignment(name, e)
-    }
 
     def parseBody(list: List[Assignment], expr: Expr) : Value = {
-        var context : Context = new HashMap[String, Value]
+        var context = Context(new HashMap[String, Value])
         list.map({
-            case Assignment(name, e) => context = context + (name -> e.eval(context))
+            case Assignment(name, e) => context = Context(context.vars + (name -> e.eval(context)))
         })
         expr.eval(context)
     }
@@ -78,21 +99,38 @@ class Arith extends JavaTokenParsers {
     def expr: Parser[Expr] = term ~ rep("+" ~ term | "-" ~ term) ^^ convertToBinary
     def term: Parser[Expr] = factor ~ rep("*" ~ factor | "/" ~ factor) ^^ convertToBinary
 
+    def callArgs: Parser[CallArgs] = "(" ~> repsep(expr, ",") <~ ")"
+
+    def call: Parser[Expr] = ident ~ callArgs ^^ {case name ~ args => CallExpr(name, args)}
+
     def factor: Parser[Expr] =
         floatingPointNumber ^^ { case s => NumericExpression(s.toDouble) } |
-        ident               ^^ { case s => VariableExpression(s)} |
+        stringLiteral       ^^ LiteralExpression  |
+        ident               ^^ VariableExpression |
         ("(" ~> expr <~ ")")
 
     def assign: Parser[Assignment] = (ident <~ "=") ~ expr ^^ { case name ~ e => Assignment(name, e) }
 
-    def body: Parser[Value] = (repsep(assign, ";") <~ ";") ~ expr ^^ { case list ~ e => parseBody(list, e) }
+    def body: Parser[Body] = ("{" ~> rep(assign <~ ";")) ~ expr <~ "}" ^^ { case list ~ e => Body(list, e) }
+
+    def args: Parser[Args] = "(" ~> repsep(ident, ",") <~ ")"
+
+    def func: Parser[Func] = ("def" ~> ident) ~ args ~ body ^^ {case name ~ args ~ body => Func(name, args, body) }
+
+    def prog: Parser[Prog] = rep(func) ^^ Prog
 }
 
 object Hello extends Arith {
     def sum(a:Int, b:Int) = a + b
 
     def main(args: Array[String]) {
-        println(parseAll(body, "a = 7 + 8; a = 5 + a; a * 2"))
+
+        val text = """
+                     | def sum(a, b) { c = a + b; c }
+                     | def hello() { "Hello!" }
+                   """.stripMargin
+
+        println(parseAll(prog, text))
     }
 }
 
