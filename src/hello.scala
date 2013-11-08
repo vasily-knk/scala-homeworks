@@ -20,7 +20,10 @@ object Arith {
         def value: Double = throw new WrongType("String -> Double")
     }
 
-    case class Context(vars: Map[String, Value])
+    type Vars = Map[String, Value]
+    type Funcs = Map[String, Func]
+
+    case class Context(vars: Vars, funcs: Funcs)
 
     trait Expr {
         def eval(context: Context) : Value
@@ -28,13 +31,20 @@ object Arith {
 
     case class BinaryExpression(left: Expr, op: String, right: Expr) extends Expr {
         def eval(context: Context) : Value = {
-            val leftVal  = left.eval(context).value
-            val rightVal = left.eval(context).value
-            op match {
-                case "+" => NumValue(leftVal + rightVal)
-                case "-" => NumValue(leftVal - rightVal)
-                case "*" => NumValue(leftVal * rightVal)
-                case "/" => NumValue(leftVal / rightVal)
+            val values = (left.eval(context), right.eval(context))
+
+            values match {
+                case (LitValue(s1), LitValue(s2)) =>
+                    op match {
+                        case "+" => LitValue(s1 + s2)
+                    }
+                case (NumValue(leftVal), NumValue(rightVal)) =>
+                    op match {
+                        case "+" => NumValue(leftVal + rightVal)
+                        case "-" => NumValue(leftVal - rightVal)
+                        case "*" => NumValue(leftVal * rightVal)
+                        case "/" => NumValue(leftVal / rightVal)
+                    }
             }
         }
     }
@@ -44,7 +54,7 @@ object Arith {
     }
 
     case class LiteralExpression(string: String) extends Expr {
-        def eval(context: Context): Value = LitValue(string)
+        def eval(context: Context): Value = LitValue(string.substring(1, string.length - 1))
     }
 
     case class ParenthesisedExpression(expr: Expr) extends Expr {
@@ -52,29 +62,70 @@ object Arith {
     }
 
     case class VariableExpression(name: String) extends Expr {
+        case class VarNotFound(smth:String) extends Exception
+
         def eval(context: Context): Value = {
-            context.vars.get(name).get
+            if (!context.vars.contains(name))
+                throw VarNotFound("Variable not found: " + name)
+            else
+                context.vars.get(name).get
         }
     }
 
-    case class Body(assignments: List[Assignment], expr: Expr)
+    case class Body(assignments: List[Assignment], expr: Expr) extends Expr {
+        def eval(context: Context): Value = {
+            var newContext = context
+            assignments.map({
+                case Assignment(name, e) => newContext = Context(newContext.vars + (name -> e.eval(newContext)), newContext.funcs)
+            })
+
+            expr.eval(newContext)
+        }
+    }
 
     case class Func(name: String, args: Args, body: Body) {
+        case class WrongArgsNum(smth:String) extends Exception
 
+        def call(argValues: ArgValues, funcs: Funcs) : Value = {
+            if (argValues.length != args.length)
+                throw WrongArgsNum("Wrong number of args")
+
+            var vars = new HashMap[String, Value]
+            (args zip argValues).map({
+                case (argName, argValue) => vars += (argName -> argValue)
+            })
+
+            body.eval(Context(vars, funcs))
+        }
     }
 
     case class Assignment(name: String, e: Expr)
 
     case class CallExpr(name: String, args: CallArgs) extends Expr {
         def eval(context: Context): Value = {
-            //val arg_values = args.map((e: Expr) => e.eval(context))
-            NumValue(0)
+            val argValues = args.map((e: Expr) => e.eval(context))
+            context.funcs.get(name).get.call(argValues, context.funcs)
         }
     }
 
-    class Prog(funcs: List[Func]) {
+    object Prog {
+        def list2map(list: List[Func]): Funcs = {
+            var funcs = new HashMap[String, Func]()
+            list.map({
+                case f => funcs += (f.name -> f)
+            })
+            funcs
+        }
+    }
 
+    class Prog(private val funcs: Funcs) {
+        def this(list: List[Func]) = {
+            this(Prog.list2map(list))
+        }
 
+        def run: Value = {
+            funcs.get("main").get.call(List(), funcs)
+        }
     }
 }
 
@@ -88,14 +139,6 @@ class Arith extends JavaTokenParsers {
             }
     }
 
-    def parseBody(list: List[Assignment], expr: Expr) : Value = {
-        var context = Context(new HashMap[String, Value])
-        list.map({
-            case Assignment(name, e) => context = Context(context.vars + (name -> e.eval(context)))
-        })
-        expr.eval(context)
-    }
-
     def expr: Parser[Expr] = term ~ rep("+" ~ term | "-" ~ term) ^^ convertToBinary
     def term: Parser[Expr] = factor ~ rep("*" ~ factor | "/" ~ factor) ^^ convertToBinary
 
@@ -106,6 +149,7 @@ class Arith extends JavaTokenParsers {
     def factor: Parser[Expr] =
         floatingPointNumber ^^ { case s => NumericExpression(s.toDouble) } |
         stringLiteral       ^^ LiteralExpression  |
+        call |
         ident               ^^ VariableExpression |
         ("(" ~> expr <~ ")")
 
@@ -117,7 +161,7 @@ class Arith extends JavaTokenParsers {
 
     def func: Parser[Func] = ("def" ~> ident) ~ args ~ body ^^ {case name ~ args ~ body => Func(name, args, body) }
 
-    def prog: Parser[Prog] = rep(func) ^^ Prog
+    def prog: Parser[Prog] = rep(func) ^^ { case list => new Prog(list) }
 }
 
 object Hello extends Arith {
@@ -127,10 +171,11 @@ object Hello extends Arith {
 
         val text = """
                      | def sum(a, b) { c = a + b; c }
-                     | def hello() { "Hello!" }
+                     | def main() { string = "Hello"; string = sum(string, " world"); string }
                    """.stripMargin
 
-        println(parseAll(prog, text))
+        println(parseAll(prog, text).get.run)
+
     }
 }
 
