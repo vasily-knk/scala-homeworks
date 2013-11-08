@@ -1,7 +1,7 @@
 import scala.util.parsing.combinator._
 import scala.collection.immutable._
 
-object Arith {
+object MyLang {
     trait Value {
         def value: Double
         def literal: String
@@ -129,8 +129,8 @@ object Arith {
     }
 }
 
-class Arith extends JavaTokenParsers {
-    import Arith._
+class MyLang extends JavaTokenParsers {
+    import MyLang._
     def convertToBinary: PartialFunction[ ~[Expr, List[ ~[String, Expr]]], Expr] = {
         case left ~ list =>
             if (list.isEmpty) left
@@ -164,7 +164,7 @@ class Arith extends JavaTokenParsers {
     def prog: Parser[Prog] = rep(func) ^^ { case list => new Prog(list) }
 }
 
-object Hello extends Arith {
+object Hello extends MyLang {
     def sum(a:Int, b:Int) = a + b
 
     def main(args: Array[String]) {
